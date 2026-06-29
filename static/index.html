@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Крипто-агрегатор</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f8fafd;
+            color: #1e293b;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 28px; margin-bottom: 10px; }
+        .subtitle { color: #64748b; margin-bottom: 20px; }
+        .coins-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 16px;
+        }
+        .coin-card {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .coin-card:hover { transform: translateY(-4px); box-shadow: 0 12px 24px rgba(0,0,0,0.1); }
+        .coin-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .coin-icon {
+            width: 40px; height: 40px; border-radius: 50%;
+            background: #f1f5f9; display: flex; align-items: center; justify-content: center;
+            font-weight: bold; font-size: 18px; margin-right: 12px;
+        }
+        .coin-name { font-weight: 600; font-size: 18px; }
+        .coin-price { font-size: 24px; font-weight: 700; margin: 8px 0; }
+        .coin-change { font-size: 14px; }
+        .positive { color: #16c784; }
+        .negative { color: #ea3943; }
+        .loading { text-align: center; padding: 40px; color: #64748b; }
+
+        /* Детальная страница */
+        .detail-container {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .info-panel {
+            flex: 1 1 280px;
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            height: fit-content;
+        }
+        .info-panel h2 { font-size: 24px; margin-bottom: 16px; }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 15px;
+        }
+        .info-row .label { color: #64748b; }
+        .info-row .value { font-weight: 500; }
+        .chart-section {
+            flex: 3 1 600px;
+        }
+        .period-selector {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .period-btn {
+            padding: 6px 16px;
+            border: 1px solid #cbd5e1;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #334155;
+        }
+        .period-btn.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+        .chart-container {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 12px 16px;
+            text-align: right;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        th { background: #f8fafc; font-weight: 600; color: #475569; }
+        td:first-child, th:first-child { text-align: left; }
+        .buy-link { color: #3b82f6; text-decoration: none; font-weight: 500; }
+        .buy-link:hover { text-decoration: underline; }
+        .fee-info {
+            font-size: 14px; color: #475569; margin-top: 16px;
+            background: #f1f5f9; border-radius: 8px; padding: 12px;
+        }
+        .back-btn {
+            background: white; border: 1px solid #cbd5e1; border-radius: 8px;
+            padding: 8px 16px; cursor: pointer; font-size: 14px;
+            margin-bottom: 20px;
+            display: inline-block;
+        }
+        .back-btn:hover { background: #f1f5f9; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+<div class="container" id="app"></div>
+
+<script>
+    let pricesData = null;
+    let candlesCache = {};
+
+    function getRoute() {
+        const hash = window.location.hash.slice(1);
+        if (hash.startsWith('coin/')) {
+            return { page: 'detail', coin: hash.split('/')[1] };
+        }
+        return { page: 'list' };
+    }
+
+    async function fetchPrices() {
+        try {
+            const resp = await fetch('/api/prices');
+            const json = await resp.json();
+            pricesData = json.data;
+            return pricesData;
+        } catch (err) {
+            console.error(err);
+            return null;
+        }
+    }
+
+    function getCoinsList(data) {
+        const coins = {};
+        data.forEach(item => {
+            if (item.error) return;
+            if (!coins[item.coin]) {
+                coins[item.coin] = {
+                    coin: item.coin,
+                    price: item.price,
+                    change_24h: item.change_24h,
+                };
+            }
+            if (item.exchange === 'Binance') {
+                coins[item.coin].price = item.price;
+                coins[item.coin].change_24h = item.change_24h;
+            }
+        });
+        return Object.values(coins);
+    }
+
+    async function renderList() {
+        const app = document.getElementById('app');
+        app.innerHTML = '<div class="loading">Загрузка данных...</div>';
+        const data = await fetchPrices();
+        if (!data || data.length === 0) {
+            app.innerHTML = '<div class="loading">Нет данных. Попробуйте позже.</div>';
+            return;
+        }
+        const coins = getCoinsList(data);
+        app.innerHTML = `
+            <h1>Крипто-агрегатор</h1>
+            <p class="subtitle">Цены с Binance. Нажмите на монету для подробностей.</p>
+            <div class="coins-grid" id="coinsGrid"></div>
+        `;
+        const grid = document.getElementById('coinsGrid');
+        coins.forEach(coin => {
+            const card = document.createElement('div');
+            card.className = 'coin-card';
+            const chg24 = coin.change_24h != null ? coin.change_24h.toFixed(2) : '—';
+            const cls24 = chg24 > 0 ? 'positive' : (chg24 < 0 ? 'negative' : '');
+            card.innerHTML = `
+                <div class="coin-header">
+                    <div class="coin-icon">${coin.coin[0]}</div>
+                    <span class="coin-name">${coin.coin}</span>
+                </div>
+                <div class="coin-price">$${coin.price ? coin.price.toFixed(2) : '—'}</div>
+                <div class="coin-change ${cls24}">24ч: ${chg24}%</div>
+            `;
+            card.addEventListener('click', () => {
+                window.location.hash = `coin/${coin.coin}`;
+            });
+            grid.appendChild(card);
+        });
+    }
+
+    // График
+    let chartInstance = null;
+    async function renderChart(coin, period = '7d') {
+        const cacheKey = `${coin}_${period}`;
+        if (!candlesCache[cacheKey]) {
+            try {
+                const resp = await fetch(`/api/candles/${coin}?period=${period}`);
+                if (!resp.ok) return;
+                const json = await resp.json();
+                candlesCache[cacheKey] = json.candles;
+            } catch (e) { return; }
+        }
+        const candles = candlesCache[cacheKey];
+        if (!candles || candles.length === 0) return;
+        const ctx = document.getElementById('priceChart').getContext('2d');
+        if (chartInstance) chartInstance.destroy();
+        chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'Цена (USDT)',
+                    data: candles.map(c => ({ x: c.time, y: c.close })),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59,130,246,0.1)',
+                    fill: true,
+                    tension: 0.2,
+                    pointRadius: 0,
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: period === '1d' ? 'hour' : (period === '7d' ? 'day' : 'day'),
+                        },
+                        ticks: {
+                            maxTicksLimit: 6,
+                        },
+                        grid: { display: false },
+                    },
+                    y: {
+                        ticks: { callback: value => '$' + value.toLocaleString() },
+                    }
+                }
+            }
+        });
+    }
+
+    async function renderDetail(coinName) {
+        const app = document.getElementById('app');
+        app.innerHTML = '<div class="loading">Загрузка данных...</div>';
+        try {
+            const resp = await fetch(`/api/coin/${coinName}/details`);
+            if (!resp.ok) throw new Error('Монета не найдена');
+            const json = await resp.json();
+            const coinData = json.data;
+            const market = json.market_info;
+            const binanceEntry = coinData.find(e => e.exchange === 'Binance');
+            const priceNow = binanceEntry?.price || (coinData.find(e => e.price)?.price);
+            const exchangesCount = coinData.filter(e => !e.error).length;
+
+            // Строим левую панель
+            let leftHTML = `
+                <div class="info-panel">
+                    <h2>${coinName}</h2>
+                    <div class="info-row"><span class="label">Цена (Binance)</span><span class="value">$${priceNow?.toFixed(2) || '—'}</span></div>
+                    ${market?.market_cap ? `<div class="info-row"><span class="label">Капитализация</span><span class="value">$${(market.market_cap/1e9).toFixed(2)} млрд</span></div>` : ''}
+                    ${market?.price_change_percentage_7d != null ? `<div class="info-row"><span class="label">Изменение за 7д</span><span class="value ${market.price_change_percentage_7d > 0 ? 'positive' : 'negative'}">${market.price_change_percentage_7d.toFixed(2)}%</span></div>` : ''}
+                    ${market?.total_volume ? `<div class="info-row"><span class="label">Объём (24ч)</span><span class="value">$${(market.total_volume/1e9).toFixed(2)} млрд</span></div>` : ''}
+                    ${market?.circulating_supply ? `<div class="info-row"><span class="label">Монет в обращении</span><span class="value">${market.circulating_supply.toLocaleString()}</span></div>` : ''}
+                    <div class="info-row"><span class="label">Бирж с парой</span><span class="value">${exchangesCount} из ${EXCHANGES_COUNT}</span></div>
+                </div>
+            `;
+            const tableHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Биржа</th>
+                            <th>Цена</th>
+                            <th>Объём (USDT)</th>
+                            <th>24ч %</th>
+                            <th>7д %</th>
+                            <th>Комиссия</th>
+                            <th>Цена покупки</th>
+                            <th>Цена продажи</th>
+                            <th>Откл. от Binance</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="detailTableBody"></tbody>
+                </table>
+                <div class="fee-info">
+                    💡 Комиссии указаны для спотовой торговли (стандартный уровень без скидок).
+                    Цена покупки = цена × (1 + комиссия), цена продажи = цена × (1 - комиссия).
+                </div>
+            `;
+            app.innerHTML = `
+                <button class="back-btn" onclick="window.location.hash=''">← Назад</button>
+                <div class="detail-container">
+                    ${leftHTML}
+                    <div class="chart-section">
+                        <div class="period-selector">
+                            <button class="period-btn active" data-period="1d">1Д</button>
+                            <button class="period-btn" data-period="7d">7Д</button>
+                            <button class="period-btn" data-period="1m">1М</button>
+                            <button class="period-btn" data-period="6m">6М</button>
+                            <button class="period-btn" data-period="1y">1Г</button>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="priceChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                ${tableHTML}
+            `;
+            // Заполняем таблицу
+            const tbody = document.getElementById('detailTableBody');
+            coinData.forEach(row => {
+                const tr = document.createElement('tr');
+                if (row.error) {
+                    tr.innerHTML = `<td>${row.exchange}</td><td colspan="9" style="color:red">${row.error}</td>`;
+                } else {
+                    const feePercent = row.fee_rate != null ? (row.fee_rate * 100).toFixed(2) + '%' : '—';
+                    const buy = row.buy_price_with_fee?.toFixed(2) || '—';
+                    const sell = row.sell_price_with_fee?.toFixed(2) || '—';
+                    const dev = row.deviation_from_binance != null ? row.deviation_from_binance.toFixed(4) + '%' : '—';
+                    const buyUrl = row.buy_url || '#';
+                    const chg24 = row.change_24h != null ? row.change_24h.toFixed(2) : '—';
+                    const chg7d = row.change_7d != null ? row.change_7d.toFixed(2) : '—';
+                    const cls24 = chg24 > 0 ? 'positive' : (chg24 < 0 ? 'negative' : '');
+                    const cls7d = chg7d > 0 ? 'positive' : (chg7d < 0 ? 'negative' : '');
+                    tr.innerHTML = `
+                        <td>${row.exchange}</td>
+                        <td>${row.price?.toFixed(2) || '—'}</td>
+                        <td>${row.volume?.toLocaleString(undefined, {maximumFractionDigits:0}) || '—'}</td>
+                        <td class="${cls24}">${chg24}%</td>
+                        <td class="${cls7d}">${chg7d}%</td>
+                        <td>${feePercent}</td>
+                        <td>${buy}</td>
+                        <td>${sell}</td>
+                        <td>${dev}</td>
+                        <td><a href="${buyUrl}" target="_blank" class="buy-link">Купить</a></td>
+                    `;
+                }
+                tbody.appendChild(tr);
+            });
+            // Отрисовка графика с периодом по умолчанию 1d
+            await renderChart(coinName, '1d');
+            // Обработчики кнопок периода
+            document.querySelectorAll('.period-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const period = btn.dataset.period;
+                    await renderChart(coinName, period);
+                });
+            });
+        } catch (err) {
+            app.innerHTML = `<div class="loading">Ошибка: ${err.message}</div>`;
+        }
+    }
+
+    // количество бирж (глобально)
+    const EXCHANGES_COUNT = 8; // Binance, OKX, Kraken, KuCoin, Bybit, Bitget, Gate.io, Coinbase
+
+    window.addEventListener('hashchange', () => {
+        const route = getRoute();
+        if (route.page === 'detail') {
+            renderDetail(route.coin);
+        } else {
+            renderList();
+        }
+    });
+
+    (async () => {
+        const route = getRoute();
+        if (route.page === 'detail') {
+            await renderDetail(route.coin);
+        } else {
+            await renderList();
+        }
+    })();
+</script>
+</body>
+</html>
